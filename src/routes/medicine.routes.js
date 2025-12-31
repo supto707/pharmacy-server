@@ -1,11 +1,39 @@
 import express from 'express';
-import { authenticate, requireAdmin, requireStaffOrAdmin } from '../middleware/auth.middleware.js';
+import { authenticate, requireAdmin, requireStaffOrAdmin, requireViewer } from '../middleware/auth.middleware.js';
 import Medicine from '../models/Medicine.model.js';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
-// Get all medicines (Staff and Admin)
-router.get('/', authenticate, requireStaffOrAdmin, async (req, res) => {
+// Get public medicines (No Auth Required)
+router.get('/public', async (req, res) => {
+    try {
+        const { limit = 12 } = req.query;
+        const query = { isActive: true };
+
+        const medicines = await Medicine.find(query)
+            .select('name nameBangla power unit sellingPrice manufacturer category image')
+            .sort({ createdAt: -1 })
+            .limit(parseInt(limit));
+
+        res.json({
+            success: true,
+            data: medicines
+        });
+    } catch (error) {
+        console.error('Get public medicines error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'ঔষধের তালিকা পেতে সমস্যা হয়েছে'
+        });
+    }
+});
+
+// Get all medicines (Viewer, Staff and Admin)
+router.get('/', authenticate, requireViewer, async (req, res) => {
     try {
         const {
             search,
@@ -76,7 +104,7 @@ router.get('/', authenticate, requireStaffOrAdmin, async (req, res) => {
 });
 
 // Get single medicine
-router.get('/:id', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.get('/:id', authenticate, requireViewer, async (req, res) => {
     try {
         const medicine = await Medicine.findById(req.params.id)
             .populate('createdBy', 'displayName')
@@ -102,8 +130,8 @@ router.get('/:id', authenticate, requireStaffOrAdmin, async (req, res) => {
     }
 });
 
-// Create medicine (Admin only)
-router.post('/', authenticate, requireAdmin, async (req, res) => {
+// Create medicine (Staff and Admin)
+router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
     try {
         const {
             name,
@@ -111,6 +139,9 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
             power,
             unit,
             unitsPerPackage,
+            tradePrice,
+            discountPercent,
+            discountAmount,
             purchasePrice,
             sellingPrice,
             stockQuantity,
@@ -127,7 +158,11 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
             nameBangla,
             power,
             unit,
+            unit,
             unitsPerPackage,
+            tradePrice,
+            discountPercent,
+            discountAmount,
             purchasePrice,
             sellingPrice,
             stockQuantity,
@@ -154,6 +189,94 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'ঔষধ যোগ করতে সমস্যা হয়েছে'
+        });
+    }
+});
+
+// Bulk Import Medicines (Staff and Admin)
+router.post('/bulk-import', authenticate, requireStaffOrAdmin, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'কোন ফাইল আপলোড করা হয়নি'
+            });
+        }
+
+        const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        if (!data || data.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'ফাইলে কোন তথ্য পাওয়া যায়নি'
+            });
+        }
+
+        const results = {
+            success: 0,
+            failed: 0,
+            errors: []
+        };
+
+        const medicinesToInsert = [];
+
+        for (const [index, row] of data.entries()) {
+            try {
+                // Basic validation
+                if (!row.name || !row.sellingPrice) {
+                    throw new Error('নাম এবং বিক্রয় মূল্য আবশ্যক');
+                }
+
+                const medicineData = {
+                    name: row.name,
+                    nameBangla: row.nameBangla || '',
+                    power: row.power || '',
+                    unit: row.unit || 'পিস',
+                    unitsPerPackage: Number(row.unitsPerPackage) || 1,
+                    tradePrice: Number(row.tradePrice) || 0,
+                    purchasePrice: Number(row.purchasePrice) || 0,
+                    sellingPrice: Number(row.sellingPrice) || 0,
+                    stockQuantity: Number(row.stockQuantity) || 0,
+                    lowStockThreshold: Number(row.lowStockThreshold) || 10,
+                    manufacturer: row.manufacturer || '',
+                    category: row.category || 'সাধারণ',
+                    description: row.description || '',
+                    discountPercent: Number(row.discountPercent) || 0,
+                    discountAmount: Number(row.discountAmount) || 0,
+                    isActive: true,
+                    createdBy: req.user._id
+                };
+
+                medicinesToInsert.push(medicineData);
+                results.success++;
+            } catch (error) {
+                results.failed++;
+                results.errors.push(`Row ${index + 2}: ${error.message}`);
+            }
+        }
+
+        if (medicinesToInsert.length > 0) {
+            await Medicine.insertMany(medicinesToInsert);
+
+            // Emit real-time update
+            const io = req.app.get('io');
+            io.to('dashboard').emit('medicines-bulk-added', { count: medicinesToInsert.length });
+        }
+
+        res.json({
+            success: true,
+            message: `${results.success} টি ঔষধ সফলভাবে ইম্পোর্ট করা হয়েছে`,
+            results
+        });
+
+    } catch (error) {
+        console.error('Bulk import error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'ইম্পোর্ট করতে সমস্যা হয়েছে'
         });
     }
 });
@@ -229,7 +352,7 @@ router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
 });
 
 // Get categories list
-router.get('/meta/categories', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.get('/meta/categories', authenticate, requireViewer, async (req, res) => {
     try {
         const categories = await Medicine.distinct('category', { isActive: true });
         res.json({

@@ -21,12 +21,12 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['admin', 'staff'],
+        enum: ['admin', 'staff', 'viewer'],
         default: 'staff'
     },
     isActive: {
         type: Boolean,
-        default: true
+        default: false
     },
     createdAt: {
         type: Date,

@@ -1,12 +1,12 @@
 import express from 'express';
-import { authenticate, requireStaffOrAdmin, requireAdmin } from '../middleware/auth.middleware.js';
+import { authenticate, requireStaffOrAdmin, requireAdmin, requireViewer } from '../middleware/auth.middleware.js';
 import Sale from '../models/Sale.model.js';
 import Medicine from '../models/Medicine.model.js';
 
 const router = express.Router();
 
 // Get all sales
-router.get('/', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.get('/', authenticate, requireViewer, async (req, res) => {
     try {
         const {
             startDate,
@@ -79,6 +79,7 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
         const {
             items,
             discount = 0,
+            extraCharge = 0,
             paymentMethod = 'নগদ',
             customerName,
             customerPhone,
@@ -136,8 +137,8 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
             await medicine.save();
         }
 
-        const finalAmount = totalAmount - discount;
-        const adjustedProfit = totalProfit - discount;
+        const finalAmount = totalAmount - discount + extraCharge;
+        const adjustedProfit = totalProfit - discount + extraCharge;
 
         // Create sale
         const sale = await Sale.create({
@@ -145,6 +146,7 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
             totalAmount,
             totalProfit: adjustedProfit,
             discount,
+            extraCharge,
             finalAmount,
             paymentMethod,
             customerName,
@@ -180,7 +182,7 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
 });
 
 // Get sale by ID
-router.get('/:id', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.get('/:id', authenticate, requireViewer, async (req, res) => {
     try {
         const sale = await Sale.findById(req.params.id)
             .populate('soldBy', 'displayName email');

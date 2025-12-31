@@ -21,13 +21,18 @@ export const authenticate = async (req, res, next) => {
         let user = await User.findOne({ firebaseUid: decodedToken.uid });
 
         if (!user) {
+            // Check if this is the first user
+            const userCount = await User.countDocuments();
+            const isFirstUser = userCount === 0;
+
             // Create new user if doesn't exist
             user = await User.create({
                 firebaseUid: decodedToken.uid,
                 email: decodedToken.email,
                 displayName: decodedToken.name || decodedToken.email.split('@')[0],
                 photoURL: decodedToken.picture || null,
-                role: 'staff' // Default role
+                role: isFirstUser ? 'admin' : 'staff', // First user is admin
+                isActive: isFirstUser ? true : false // First user is active
             });
         } else {
             // Update last login
@@ -35,10 +40,21 @@ export const authenticate = async (req, res, next) => {
             await user.save();
         }
 
+        // FAILSAFE: If there are NO admins in the system (e.g. first user was created as staff),
+        // promote this user to admin and make them active.
+        const adminCount = await User.countDocuments({ role: 'admin' });
+        if (adminCount === 0) {
+            console.log('⚠️ No admins found. Promoting current user to Admin.');
+            user.role = 'admin';
+            user.isActive = true;
+            await user.save();
+        }
+
         if (!user.isActive) {
             return res.status(403).json({
                 success: false,
-                message: 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে'
+                message: 'আপনার অ্যাকাউন্ট নিষ্ক্রিয় করা হয়েছে',
+                code: 'ACCOUNT_INACTIVE'
             });
         }
 
@@ -80,3 +96,6 @@ export const requireAdmin = requireRole('admin');
 
 // Staff or Admin middleware
 export const requireStaffOrAdmin = requireRole('admin', 'staff');
+
+// Viewer, Staff or Admin middleware (Read Access)
+export const requireViewer = requireRole('admin', 'staff', 'viewer');

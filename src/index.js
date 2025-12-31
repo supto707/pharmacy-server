@@ -14,6 +14,7 @@ import purchaseRoutes from './routes/purchase.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import requestRoutes from './routes/request.routes.js';
 import userRoutes from './routes/user.routes.js';
+import dataRoutes from './routes/data.routes.js';
 
 dotenv.config();
 
@@ -77,6 +78,7 @@ app.use('/api/purchases', purchaseRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/data', dataRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

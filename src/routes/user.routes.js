@@ -70,7 +70,7 @@ router.patch('/:id/role', authenticate, requireAdmin, async (req, res) => {
     try {
         const { role } = req.body;
 
-        if (!['admin', 'staff'].includes(role)) {
+        if (!['admin', 'staff', 'viewer'].includes(role)) {
             return res.status(400).json({
                 success: false,
                 message: 'অবৈধ ভূমিকা'
@@ -100,7 +100,7 @@ router.patch('/:id/role', authenticate, requireAdmin, async (req, res) => {
 
         res.json({
             success: true,
-            message: `ব্যবহারকারীর ভূমিকা "${role === 'admin' ? 'অ্যাডমিন' : 'স্টাফ'}" হিসেবে আপডেট করা হয়েছে`,
+            message: `ব্যবহারকারীর ভূমিকা "${role === 'admin' ? 'অ্যাডমিন' : role === 'staff' ? 'স্টাফ' : 'ভিউয়ার'}" হিসেবে আপডেট করা হয়েছে`,
             data: user
         });
     } catch (error) {

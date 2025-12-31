@@ -25,6 +25,22 @@ const medicineSchema = new mongoose.Schema({
         type: Number,
         default: 10 // e.g., 10 tablets per strip
     },
+    tradePrice: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    discountPercent: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    discountAmount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     purchasePrice: {
         type: Number,
         required: true,

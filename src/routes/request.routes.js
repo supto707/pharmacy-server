@@ -1,12 +1,12 @@
 import express from 'express';
-import { authenticate, requireStaffOrAdmin, requireAdmin } from '../middleware/auth.middleware.js';
+import { authenticate, requireStaffOrAdmin, requireAdmin, requireViewer } from '../middleware/auth.middleware.js';
 import StockRequest from '../models/StockRequest.model.js';
 import Medicine from '../models/Medicine.model.js';
 
 const router = express.Router();
 
 // Get stock requests
-router.get('/', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.get('/', authenticate, requireViewer, async (req, res) => {
     try {
         const { status, page = 1, limit = 50 } = req.query;
 
