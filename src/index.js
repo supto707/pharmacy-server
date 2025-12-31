@@ -64,6 +64,11 @@ initializeFirebase();
 // Connect to MongoDB
 connectDB();
 
+// Basic Routes
+app.get('/', (req, res) => {
+  res.send('Pharmacy Buddy Server is Running! 🚀');
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/medicines', medicineRoutes);
@@ -97,7 +102,7 @@ const PORT = process.env.PORT || 5000;
 // Export app for Vercel
 export default app;
 
-if (process.env.NODE_ENV !== 'production') {
+if (!process.env.VERCEL) {
   httpServer.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 Socket.io ready for connections`);
