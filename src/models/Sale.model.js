@@ -111,6 +111,5 @@ saleSchema.pre('save', async function (next) {
 // Index for date-based queries
 saleSchema.index({ saleDate: -1 });
 saleSchema.index({ soldBy: 1, saleDate: -1 });
-saleSchema.index({ invoiceNumber: 1 });
 
 export default mongoose.model('Sale', saleSchema);
