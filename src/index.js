@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { connectDB } from './config/db.js';
@@ -44,6 +46,7 @@ const io = new Server(httpServer, {
 app.set('io', io);
 
 // Middleware
+app.use(helmet()); // Security headers
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl requests)
@@ -57,6 +60,22 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: {
+    success: false,
+    message: 'Too many requests from this IP, please try again after 15 minutes'
+  }
+});
+
+// Apply rate limiting to all requests
+app.use('/api/', limiter);
+
 app.use(express.json());
 
 // Initialize Firebase Admin
@@ -83,6 +102,23 @@ app.use('/api/data', dataRoutes);
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'Server is running', timestamp: new Date().toISOString() });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(`[Error] ${err.stack}`);
+
+  const status = err.status || 500;
+  const message = err.message || 'Internal Server Error';
+
+  res.status(status).json({
+    success: false,
+    status,
+    message: process.env.NODE_ENV === 'production'
+      ? 'An unexpected error occurred'
+      : message,
+    stack: process.env.NODE_ENV === 'production' ? null : err.stack
+  });
 });
 
 // Socket.io connection handling

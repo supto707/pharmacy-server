@@ -158,7 +158,6 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
             nameBangla,
             power,
             unit,
-            unit,
             unitsPerPackage,
             tradePrice,
             discountPercent,
@@ -231,24 +230,40 @@ router.post('/bulk-import', authenticate, requireStaffOrAdmin, upload.single('fi
                 }
 
                 const medicineData = {
-                    name: row.name,
-                    nameBangla: row.nameBangla || '',
-                    power: row.power || '',
-                    unit: row.unit || 'পিস',
+                    name: row.name.toString().trim(),
+                    nameBangla: (row.nameBangla || '').toString().trim(),
+                    power: (row.power || '').toString().trim(),
+                    unit: (row.unit || 'পিস').toString().trim(),
                     unitsPerPackage: Number(row.unitsPerPackage) || 1,
                     tradePrice: Number(row.tradePrice) || 0,
                     purchasePrice: Number(row.purchasePrice) || 0,
                     sellingPrice: Number(row.sellingPrice) || 0,
                     stockQuantity: Number(row.stockQuantity) || 0,
                     lowStockThreshold: Number(row.lowStockThreshold) || 10,
-                    manufacturer: row.manufacturer || '',
-                    category: row.category || 'সাধারণ',
-                    description: row.description || '',
+                    manufacturer: (row.manufacturer || '').toString().trim(),
+                    category: (row.category || 'সাধারণ').toString().trim(),
+                    description: (row.description || '').toString().trim(),
                     discountPercent: Number(row.discountPercent) || 0,
                     discountAmount: Number(row.discountAmount) || 0,
                     isActive: true,
                     createdBy: req.user._id
                 };
+
+                // Validate required fields for Mongoose model
+                if (!medicineData.power) {
+                    throw new Error('পাওয়ার (Power) আবশ্যক');
+                }
+                if (isNaN(medicineData.purchasePrice) || medicineData.purchasePrice <= 0) {
+                    throw new Error('সঠিক ক্রয় মূল্য আবশ্যক');
+                }
+                if (medicineData.stockQuantity < 0) {
+                    throw new Error('সঠিক স্টকের পরিমাণ আবশ্যক');
+                }
+
+                const validUnits = ['পাতা', 'পিস', 'বোতল', 'বক্স', 'টিউব', 'স্ট্রিপ', 'প্যাকেট'];
+                if (!validUnits.includes(medicineData.unit)) {
+                    throw new Error(`ইউনিট '${medicineData.unit}' সঠিক নয়। সঠিক ইউনিটগুলো হলো: ${validUnits.join(', ')}`);
+                }
 
                 medicinesToInsert.push(medicineData);
                 results.success++;
@@ -259,24 +274,45 @@ router.post('/bulk-import', authenticate, requireStaffOrAdmin, upload.single('fi
         }
 
         if (medicinesToInsert.length > 0) {
-            await Medicine.insertMany(medicinesToInsert);
+            try {
+                await Medicine.insertMany(medicinesToInsert, { ordered: false });
 
-            // Emit real-time update
-            const io = req.app.get('io');
-            io.to('dashboard').emit('medicines-bulk-added', { count: medicinesToInsert.length });
+                // Emit real-time update
+                const io = req.app.get('io');
+                if (io) {
+                    io.to('dashboard').emit('medicines-bulk-added', { count: medicinesToInsert.length });
+                }
+            } catch (insertError) {
+                console.error('InsertMany partial failure:', insertError);
+                // If some succeeded and some failed, insertMany with ordered:false throws but contains successes
+                results.failed += (insertError.writeErrors?.length || 0);
+                results.success -= (insertError.writeErrors?.length || 0);
+
+                if (insertError.writeErrors) {
+                    insertError.writeErrors.forEach(err => {
+                        results.errors.push(`Row ${err.index + 2} (DB): ${err.errmsg}`);
+                    });
+                } else {
+                    // Fallback for other insertMany errors
+                    results.errors.push(`Database error: ${insertError.message}`);
+                }
+            }
         }
 
         res.json({
             success: true,
-            message: `${results.success} টি ঔষধ সফলভাবে ইম্পোর্ট করা হয়েছে`,
+            message: results.failed > 0
+                ? `${results.success} টি ঔষধ সফলভাবে ইম্পোর্ট করা হয়েছে, ${results.failed} টি ব্যর্থ হয়েছে`
+                : `${results.success} টি ঔষধ সফলভাবে ইম্পোর্ট করা হয়েছে`,
             results
         });
 
     } catch (error) {
-        console.error('Bulk import error:', error);
+        console.error('Bulk import fatal error:', error);
         res.status(500).json({
             success: false,
-            message: 'ইম্পোর্ট করতে সমস্যা হয়েছে'
+            message: 'ইম্পোর্ট করার সময় একটি গুরুতর ত্রুটি ঘটেছে',
+            error: error.message
         });
     }
 });

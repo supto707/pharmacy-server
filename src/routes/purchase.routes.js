@@ -1,4 +1,6 @@
 import express from 'express';
+import mongoose from 'mongoose';
+import asyncHandler from 'express-async-handler';
 import { authenticate, requireAdmin } from '../middleware/auth.middleware.js';
 import Purchase from '../models/Purchase.model.js';
 import Medicine from '../models/Medicine.model.js';
@@ -72,33 +74,33 @@ router.get('/', authenticate, requireAdmin, async (req, res) => {
 });
 
 // Create purchase (Admin only)
-router.post('/', authenticate, requireAdmin, async (req, res) => {
-    try {
-        const {
-            medicineId,
-            quantity,
-            purchasePrice,
-            supplier,
-            invoiceNumber,
-            batchNumber,
-            expiryDate,
-            purchaseDate,
-            notes
-        } = req.body;
+router.post('/', authenticate, requireAdmin, asyncHandler(async (req, res) => {
+    const {
+        medicineId,
+        quantity,
+        purchasePrice,
+        supplier,
+        invoiceNumber,
+        batchNumber,
+        expiryDate,
+        purchaseDate,
+        notes
+    } = req.body;
 
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
         // Find the medicine
-        const medicine = await Medicine.findById(medicineId);
+        const medicine = await Medicine.findById(medicineId).session(session);
         if (!medicine) {
-            return res.status(404).json({
-                success: false,
-                message: 'ঔষধ পাওয়া যায়নি'
-            });
+            throw new Error('ঔষধ পাওয়া যায়নি');
         }
 
         const totalCost = quantity * purchasePrice;
 
         // Create purchase record
-        const purchase = await Purchase.create({
+        const [purchase] = await Purchase.create([{
             medicine: medicineId,
             quantity,
             purchasePrice,
@@ -110,7 +112,7 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
             purchaseDate: purchaseDate || new Date(),
             notes,
             purchasedBy: req.user._id
-        });
+        }], { session });
 
         // Update medicine stock and purchase price
         medicine.stockQuantity += quantity;
@@ -118,7 +120,11 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
         if (batchNumber) medicine.batchNumber = batchNumber;
         if (expiryDate) medicine.expiryDate = expiryDate;
         medicine.updatedBy = req.user._id;
-        await medicine.save();
+        await medicine.save({ session });
+
+        // Commit transaction
+        await session.commitTransaction();
+        session.endSession();
 
         // Populate the purchase
         await purchase.populate('medicine', 'name nameBangla power unit');
@@ -126,26 +132,32 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
 
         // Emit real-time updates
         const io = req.app.get('io');
-        io.to('dashboard').emit('purchase-created', purchase);
-        io.to('dashboard').emit('medicine-updated', medicine);
-        io.to('dashboard').emit('stock-updated', {
-            medicineId,
-            stockQuantity: medicine.stockQuantity
-        });
+        if (io) {
+            io.to('dashboard').emit('purchase-created', purchase);
+            io.to('dashboard').emit('medicine-updated', medicine);
+            io.to('dashboard').emit('stock-updated', {
+                medicineId,
+                stockQuantity: medicine.stockQuantity
+            });
+        }
 
         res.status(201).json({
             success: true,
-            message: 'ক্রয় সফলভাবে রেকর্ড করা হয়েছে',
+            message: 'ক্রয় সফলভাবে রেকর্ড করা হয়েছে',
             data: purchase
         });
     } catch (error) {
+        // Abort transaction on error
+        await session.abortTransaction();
+        session.endSession();
+
         console.error('Create purchase error:', error);
-        res.status(500).json({
+        res.status(error.message === 'ঔষধ পাওয়া যায়নি' ? 404 : 500).json({
             success: false,
-            message: 'ক্রয় রেকর্ড করতে সমস্যা হয়েছে'
+            message: error.message || 'ক্রয় রেকর্ড করতে সমস্যা হয়েছে'
         });
     }
-});
+}));
 
 // Get purchase by ID
 router.get('/:id', authenticate, requireAdmin, async (req, res) => {

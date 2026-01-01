@@ -1,4 +1,6 @@
 import express from 'express';
+import mongoose from 'mongoose';
+import asyncHandler from 'express-async-handler';
 import { authenticate, requireStaffOrAdmin, requireAdmin, requireViewer } from '../middleware/auth.middleware.js';
 import Sale from '../models/Sale.model.js';
 import Medicine from '../models/Medicine.model.js';
@@ -74,45 +76,42 @@ router.get('/', authenticate, requireViewer, async (req, res) => {
 });
 
 // Create sale (Staff and Admin)
-router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
+router.post('/', authenticate, requireStaffOrAdmin, asyncHandler(async (req, res) => {
+    const {
+        items,
+        discount = 0,
+        extraCharge = 0,
+        paymentMethod = 'নগদ',
+        customerName,
+        customerPhone,
+        notes
+    } = req.body;
+
+    if (!items || items.length === 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'অন্তত একটি ঔষধ নির্বাচন করুন'
+        });
+    }
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
-        const {
-            items,
-            discount = 0,
-            extraCharge = 0,
-            paymentMethod = 'নগদ',
-            customerName,
-            customerPhone,
-            notes
-        } = req.body;
-
-        if (!items || items.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'অন্তত একটি ঔষধ নির্বাচন করুন'
-            });
-        }
-
         // Validate and prepare items
         const saleItems = [];
         let totalAmount = 0;
         let totalProfit = 0;
 
         for (const item of items) {
-            const medicine = await Medicine.findById(item.medicineId);
+            const medicine = await Medicine.findById(item.medicineId).session(session);
 
             if (!medicine) {
-                return res.status(404).json({
-                    success: false,
-                    message: `ঔষধ পাওয়া যায়নি: ${item.medicineId}`
-                });
+                throw new Error(`ঔষধ পাওয়া যায়নি: ${item.medicineId}`);
             }
 
             if (medicine.stockQuantity < item.quantity) {
-                return res.status(400).json({
-                    success: false,
-                    message: `"${medicine.name}" - পর্যাপ্ত স্টক নেই। বর্তমান স্টক: ${medicine.stockQuantity}`
-                });
+                throw new Error(`"${medicine.name}" - পর্যাপ্ত স্টক নেই। বর্তমান স্টক: ${medicine.stockQuantity}`);
             }
 
             const itemTotal = medicine.sellingPrice * item.quantity;
@@ -134,14 +133,14 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
 
             // Update stock
             medicine.stockQuantity -= item.quantity;
-            await medicine.save();
+            await medicine.save({ session });
         }
 
         const finalAmount = totalAmount - discount + extraCharge;
         const adjustedProfit = totalProfit - discount + extraCharge;
 
         // Create sale
-        const sale = await Sale.create({
+        const [sale] = await Sale.create([{
             items: saleItems,
             totalAmount,
             totalProfit: adjustedProfit,
@@ -153,19 +152,25 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
             customerPhone,
             notes,
             soldBy: req.user._id
-        });
+        }], { session });
 
         await sale.populate('soldBy', 'displayName email');
 
-        // Emit real-time updates
+        // Commit transaction
+        await session.commitTransaction();
+        session.endSession();
+
+        // Emit real-time updates (after successful commit)
         const io = req.app.get('io');
-        io.to('dashboard').emit('sale-created', sale);
-        io.to('dashboard').emit('stock-updated', {
-            items: saleItems.map(item => ({
-                medicineId: item.medicine,
-                medicineName: item.medicineName
-            }))
-        });
+        if (io) {
+            io.to('dashboard').emit('sale-created', sale);
+            io.to('dashboard').emit('stock-updated', {
+                items: saleItems.map(item => ({
+                    medicineId: item.medicine,
+                    medicineName: item.medicineName
+                }))
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -173,13 +178,17 @@ router.post('/', authenticate, requireStaffOrAdmin, async (req, res) => {
             data: sale
         });
     } catch (error) {
+        // Abort transaction on error
+        await session.abortTransaction();
+        session.endSession();
+
         console.error('Create sale error:', error);
-        res.status(500).json({
+        res.status(error.message.includes('পর্যাপ্ত স্টক নেই') || error.message.includes('পাওয়া যায়নি') ? 400 : 500).json({
             success: false,
-            message: 'বিক্রয় করতে সমস্যা হয়েছে'
+            message: error.message || 'বিক্রয় করতে সমস্যা হয়েছে'
         });
     }
-});
+}));
 
 // Get sale by ID
 router.get('/:id', authenticate, requireViewer, async (req, res) => {
