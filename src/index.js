@@ -33,6 +33,23 @@ const allowedOrigins = [
   'https://pharmacy-client-supto.vercel.app'
 ].filter(Boolean);
 
+// Socket.io setup (placed early to avoid ReferenceErrors)
+const io = new Server(httpServer, {
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.startsWith('http://localhost:')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  path: '/socket.io/',
+  transports: ['polling', 'websocket']
+});
+
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors({
@@ -116,7 +133,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Socket.io connection handling
+
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
@@ -131,23 +148,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-
-// Socket.io setup (placed after CORS to ensure shared config)
-const io = new Server(httpServer, {
-  cors: {
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.startsWith('http://localhost:')) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: ['GET', 'POST'],
-    credentials: true
-  },
-  path: '/socket.io/',
-  transports: ['polling', 'websocket']
-});
 
 // Make io accessible in routes
 app.set('io', io);
