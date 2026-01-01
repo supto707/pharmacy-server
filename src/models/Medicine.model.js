@@ -46,6 +46,22 @@ const medicineSchema = new mongoose.Schema({
         required: true,
         min: 0
     },
+    mrp: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    sellingDiscountPercent: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    sellingDiscountAmount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     sellingPrice: {
         type: Number,
         required: true,
